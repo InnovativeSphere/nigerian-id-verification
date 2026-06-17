@@ -184,4 +184,3 @@ All listed in `requirements.txt`.
 - **Multi‑camera support** – monitor multiple inspection stations simultaneously
 
 ---
-ur project folder. When you're ready, we'll finalize the `.gitignore` and push to GitHub. Congratulations, Salim – your portfolio is now truly exceptional. 😊
