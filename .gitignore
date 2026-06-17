@@ -1,0 +1,35 @@
+# Virtual environment
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment variables (contains secrets)
+.env
+
+# Real config (generated from example)
+config.py
+
+# Debug scripts (temporary, not part of the system)
+debug_detector.py
+debug_classifier.py
+
+# Extracted face images (generated at runtime)
+extracted_faces/
+
+# Log files (generated at runtime)
+logs/
+
+# Test images (synthetic / sample, can be regenerated)
+test_images/
+
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db

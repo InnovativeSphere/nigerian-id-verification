@@ -1,0 +1,7 @@
+opencv-python
+easyocr
+torch
+psycopg2-binary
+python-dotenv
+pydantic
+numpy
