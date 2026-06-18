@@ -15,16 +15,17 @@ from config import settings
 from utils import ensure_folder_exists
 from detector import detect_document
 from classifier import classify_document
-from extractor import extract_with_retry
+from extractor import extract_with_retry, extract_field_regions
 from face import extract_face
-from database import lookup_identity, insert_identity
+from database import lookup_identity, insert_identity, update_fraud_record
+from fraud_check import run_fraud_checks
 from logger import get_logger
 
 logger = get_logger(__name__)
 
 
 def _process_document(image: np.ndarray) -> dict:
-    """Run the full extraction pipeline on a single document image."""
+    """Run the full extraction pipeline with V2 fraud checks."""
     # 1. Detect and straighten the ID card
     doc = detect_document(image)
     if doc is None:
@@ -38,9 +39,22 @@ def _process_document(image: np.ndarray) -> dict:
     # 3. Extract fields with retry
     extracted = extract_with_retry(doc, doc_type)
 
-    # 4. Extract face
-    face_img, face_path = extract_face(doc, doc_type)
+    # 4. Extract face (now returns bbox too)
+    face_img, face_path, face_bbox = extract_face(doc, doc_type)
     extracted["face_path"] = face_path
+
+    # 4b. Extract field regions for font analysis
+    field_regions = extract_field_regions(doc, doc_type)
+
+    # 4c. Run fraud checks (V2)
+    fraud_result = run_fraud_checks(
+        image=doc,
+        field_regions=field_regions,
+        face_bbox=face_bbox,
+        id_number=extracted.get("id_number"),
+        doc_type=doc_type
+    )
+    extracted["fraud_check"] = fraud_result
 
     # Ensure doc_type is passed to the database
     extracted["doc_type"] = doc_type
@@ -60,6 +74,10 @@ def _process_document(image: np.ndarray) -> dict:
             except Exception as e:
                 logger.error(f"Failed to insert identity: {e}")
                 extracted["db_status"] = "DB_ERROR"
+
+        # Update fraud tracking columns if record exists
+        if extracted["db_status"] in ("KNOWN", "NEW_ENTRY"):
+            update_fraud_record(id_number, fraud_result)
     else:
         extracted["db_status"] = "NO_ID_NUMBER"
 
@@ -76,7 +94,9 @@ def _process_document(image: np.ndarray) -> dict:
         "face_path": face_path,
         "confidence": extracted.get("confidence", "UNKNOWN"),
         "retried": extracted.get("retried", False),
-        "db_status": extracted.get("db_status")
+        "db_status": extracted.get("db_status"),
+        "fraud_check": fraud_result,
+        "flag_count": extracted.get("flag_count", 0)
     }
 
     return result
@@ -111,27 +131,23 @@ def run_live_mode() -> None:
         if not ret or frame is None:
             continue
 
-        # Attempt detection on every frame
         doc = detect_document(frame)
 
         if doc is not None:
             stable_frame_count += 1
-            # Only trigger pipeline after stability threshold
             if stable_frame_count >= settings.frame_stability_count:
-                # Process the document
                 result = _process_document(frame)
                 last_result = result
                 logger.info(f"Live detection: {result.get('doc_type', 'UNKNOWN')} | "
                             f"ID: {result.get('id_number', 'N/A')} | "
-                            f"DB: {result.get('db_status', 'N/A')}")
-                stable_frame_count = 0  # reset
+                            f"DB: {result.get('db_status', 'N/A')} | "
+                            f"Fraud: {result.get('fraud_check', {}).get('fraud_status', 'N/A')}")
+                stable_frame_count = 0
         else:
             stable_frame_count = 0
 
-        # Display overlay if we have a recent result
         if last_result and doc is not None:
-            # Simple overlay – show document type and ID number
-            overlay_text = f"{last_result.get('doc_type', '')} | {last_result.get('id_number', '')}"
+            overlay_text = f"{last_result.get('doc_type', '')} | {last_result.get('id_number', '')} | {last_result.get('fraud_check', {}).get('fraud_status', '')}"
             cv2.putText(frame, overlay_text, (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
@@ -152,7 +168,6 @@ def main():
                         help="Path to image (required for image mode)")
     args = parser.parse_args()
 
-    # Ensure required output folders exist
     ensure_folder_exists(settings.face_output_dir)
     ensure_folder_exists("logs")
 

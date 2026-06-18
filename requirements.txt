@@ -4,4 +4,6 @@ torch
 psycopg2-binary
 python-dotenv
 pydantic
+Pillow
 numpy
+scikit-image

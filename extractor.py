@@ -7,7 +7,7 @@ retry logic with enhanced preprocessing, and nationality defaulting.
 import re
 import cv2
 import numpy as np
-from reader import read_full
+from reader import read_full, _reader
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -50,6 +50,55 @@ def _search_patterns(text: str, patterns: list) -> str | None:
         if match:
             return match.group(1).strip()
     return None
+
+
+def extract_field_regions(image: np.ndarray, doc_type: str) -> dict:
+    """
+    Locate the bounding boxes of key fields on the document using OCR.
+    Returns a dictionary mapping field names to (x, y, w, h) tuples,
+    or None if not found. Used by font_analysis.py for region comparison.
+    """
+    if image is None or image.size == 0:
+        return {}
+
+    # Use the upscaled grayscale version for OCR consistency
+    h, w = image.shape[:2]
+    resized = cv2.resize(image, (w * 2, h * 2), interpolation=cv2.INTER_CUBIC)
+    if len(resized.shape) == 3:
+        gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = resized.copy()
+
+    results = _reader.readtext(gray)
+    field_regions = {}
+
+    # Define patterns for the fields we care about for font analysis
+    field_patterns = {
+        "surname": CRITICAL["surname"],
+        "first_name": CRITICAL["first_name"],
+        "id_number": CRITICAL["id_number"],
+        "sex": OPTIONAL["sex"],
+        "nationality": OPTIONAL["nationality"],
+        "date_of_birth": OPTIONAL["date_of_birth"],
+    }
+
+    for field, patterns in field_patterns.items():
+        for pat in patterns:
+            match = re.search(pat, ' '.join(r[1] for r in results), re.IGNORECASE)
+            if match:
+                # Find the bounding box of the region that contained this match
+                for (bbox, text, conf) in results:
+                    if match.group(1) in text:
+                        # bbox is [[x1,y1],[x2,y1],[x2,y2],[x1,y2]]
+                        x1 = int(bbox[0][0])
+                        y1 = int(bbox[0][1])
+                        x2 = int(bbox[2][0])
+                        y2 = int(bbox[2][1])
+                        field_regions[field] = (x1, y1, x2 - x1, y2 - y1)
+                        break
+                break
+
+    return field_regions
 
 
 def extract_fields(image: np.ndarray, doc_type: str) -> dict:
